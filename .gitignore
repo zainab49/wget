@@ -1,0 +1,9 @@
+# Build output
+wget
+wget.exe
+
+# Runtime output
+wget-log
+
+# Test scratch
+testrun/
