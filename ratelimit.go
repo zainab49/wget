@@ -20,9 +20,12 @@ func newRateLimitedReader(r io.Reader, limit int64) io.Reader {
 		return r
 	}
 	return &rateLimitedReader{
-		r:         r,
-		limit:     limit,
-		allowance: float64(limit),
+		r:     r,
+		limit: limit,
+		// Start with an empty bucket: a full bucket would let the transfer
+		// burst a whole second's worth of data at once, pushing the measured
+		// average speed above the configured limit.
+		allowance: 0,
 		last:      time.Now(),
 	}
 }

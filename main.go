@@ -30,7 +30,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
 		}
-		fmt.Printf("Output will be written to %q.\n", logFile)
+		fmt.Printf("Output will be written to '%s'.\n", logFile)
 		return
 	}
 

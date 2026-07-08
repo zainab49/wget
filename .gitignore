@@ -1,9 +1,49 @@
-# Build output
+# ---- Build output ----
 wget
 wget.exe
+*.exe
+*.out
+/out/
+/bin/
+/dist/
 
-# Runtime output
+# ---- Go ----
+*.test
+*.prof
+*.cover
+coverage.*
+go.work
+go.work.sum
+# NOTE: vendor/ is intentionally committed — the Dockerfile builds with -mod=vendor.
+
+# ---- Runtime / download output ----
 wget-log
+wget-log.*
+*.download
 
-# Test scratch
+# Files/sites fetched while testing (this is a downloader, so ignore test artifacts)
+*.zip
+*.tar.gz
+*.jpg
+*.jpeg
+*.png
+*.gif
+downloads.txt
+
+# ---- Test scratch ----
 testrun/
+tmp/
+scratch/
+
+# ---- Editor / IDE ----
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.log
+
+# ---- OS cruft ----
+.DS_Store
+Thumbs.db
+desktop.ini
