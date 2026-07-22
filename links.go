@@ -40,6 +40,14 @@ func extractHTMLLinks(body []byte, base *url.URL) []string {
 					}
 				}
 			}
+			// Inline url() references in a style="" attribute on any element.
+			if v, ok := getAttr(n, "style"); ok {
+				out = appendCSSLinks(out, []byte(v), base)
+			}
+			// Inline url() references inside a <style> block.
+			if n.Data == "style" {
+				out = appendCSSLinks(out, []byte(elementText(n)), base)
+			}
 		}
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
 			walk(c)
@@ -51,13 +59,29 @@ func extractHTMLLinks(body []byte, base *url.URL) []string {
 
 // extractCSSLinks returns absolute URLs referenced by url() in a CSS document.
 func extractCSSLinks(body []byte, base *url.URL) []string {
-	var out []string
-	for _, m := range cssURLRe.FindAllSubmatch(body, -1) {
+	return appendCSSLinks(nil, body, base)
+}
+
+// appendCSSLinks appends the absolute url() references found in css to out.
+func appendCSSLinks(out []string, css []byte, base *url.URL) []string {
+	for _, m := range cssURLRe.FindAllSubmatch(css, -1) {
 		if abs := resolveRef(base, string(m[1])); abs != "" {
 			out = append(out, abs)
 		}
 	}
 	return out
+}
+
+// elementText concatenates the direct text children of an element, which is how
+// the CSS body of a <style> node is stored by the parser.
+func elementText(n *html.Node) string {
+	var b strings.Builder
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type == html.TextNode {
+			b.WriteString(c.Data)
+		}
+	}
+	return b.String()
 }
 
 // resolveRef resolves a possibly-relative reference against base and strips the
@@ -120,6 +144,20 @@ func rewriteHTMLFile(localFile string, pageURL *url.URL, resolve func(abs string
 					}
 				}
 			}
+			// Rewrite url() references in an inline style="" attribute.
+			for i, a := range n.Attr {
+				if a.Key == "style" {
+					n.Attr[i].Val = string(rewriteCSSBytes([]byte(a.Val), pageURL, resolve))
+				}
+			}
+			// Rewrite url() references inside a <style> block.
+			if n.Data == "style" {
+				for c := n.FirstChild; c != nil; c = c.NextSibling {
+					if c.Type == html.TextNode {
+						c.Data = string(rewriteCSSBytes([]byte(c.Data), pageURL, resolve))
+					}
+				}
+			}
 		}
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
 			walk(c)
@@ -140,7 +178,14 @@ func rewriteCSSFile(localFile string, pageURL *url.URL, resolve func(abs string)
 	if err != nil {
 		return err
 	}
-	out := cssURLRe.ReplaceAllFunc(data, func(match []byte) []byte {
+	out := rewriteCSSBytes(data, pageURL, resolve)
+	return os.WriteFile(localFile, out, 0o644)
+}
+
+// rewriteCSSBytes rewrites every url() reference in css that resolves to a
+// downloaded file into its local relative path, leaving the rest untouched.
+func rewriteCSSBytes(css []byte, pageURL *url.URL, resolve func(abs string) (string, bool)) []byte {
+	return cssURLRe.ReplaceAllFunc(css, func(match []byte) []byte {
 		sub := cssURLRe.FindSubmatch(match)
 		if sub == nil {
 			return match
@@ -154,5 +199,4 @@ func rewriteCSSFile(localFile string, pageURL *url.URL, resolve func(abs string)
 		}
 		return match
 	})
-	return os.WriteFile(localFile, out, 0o644)
 }

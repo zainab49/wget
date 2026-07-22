@@ -21,39 +21,41 @@ func multiDownload(opts *Options) error {
 		return fmt.Errorf("no URLs found in %s", opts.InputFile)
 	}
 
-	// First, fetch content sizes concurrently so we can print them together.
-	sizes := make([]int64, len(urls))
+	// Open one GET per URL concurrently. The response headers already carry
+	// Content-Length, so there is no need for a separate size-probe request.
+	resps := make([]*http.Response, len(urls))
+	errs := make([]error, len(urls))
 	var wg sync.WaitGroup
 	for i, u := range urls {
 		wg.Add(1)
 		go func(i int, u string) {
 			defer wg.Done()
-			sizes[i] = contentLength(u)
+			resps[i], errs[i] = httpClient.Get(u)
 		}(i, u)
 	}
 	wg.Wait()
 
-	sizeStrs := make([]string, len(sizes))
-	for i, s := range sizes {
-		if s >= 0 {
-			sizeStrs[i] = fmt.Sprintf("%d", s)
+	sizeStrs := make([]string, len(urls))
+	for i := range urls {
+		if errs[i] == nil && resps[i] != nil && resps[i].ContentLength >= 0 {
+			sizeStrs[i] = fmt.Sprintf("%d", resps[i].ContentLength)
 		} else {
 			sizeStrs[i] = "unknown"
 		}
 	}
 	fmt.Printf("content size: [%s]\n", strings.Join(sizeStrs, ", "))
 
-	// Now download every file concurrently.
+	// Now stream every response body to disk concurrently.
 	var (
 		mu       sync.Mutex
 		firstErr error
 	)
 	wg = sync.WaitGroup{}
-	for _, u := range urls {
+	for i, u := range urls {
 		wg.Add(1)
-		go func(u string) {
+		go func(i int, u string) {
 			defer wg.Done()
-			name, err := saveURL(u, opts)
+			name, err := saveResponse(u, resps[i], errs[i], opts)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
@@ -64,7 +66,7 @@ func multiDownload(opts *Options) error {
 				return
 			}
 			fmt.Printf("finished %s\n", name)
-		}(u)
+		}(i, u)
 	}
 	wg.Wait()
 
@@ -95,32 +97,15 @@ func readURLList(file string) ([]string, error) {
 	return urls, sc.Err()
 }
 
-// contentLength performs a lightweight request to discover a file's size.
-// It returns -1 when the size is unknown.
-func contentLength(rawURL string) int64 {
-	resp, err := httpClient.Head(rawURL)
-	if err != nil || resp.StatusCode != http.StatusOK || resp.ContentLength < 0 {
-		if resp != nil {
-			resp.Body.Close()
-		}
-		// Fall back to a GET (some servers reject HEAD).
-		resp, err = httpClient.Get(rawURL)
-		if err != nil {
-			return -1
-		}
-		defer resp.Body.Close()
-		return resp.ContentLength
+// saveResponse writes an already-open response body to disk and returns the
+// saved file's base name. It owns closing the body. Used by the -i concurrent
+// path, where the same GET that reported the size also delivers the content.
+func saveResponse(rawURL string, resp *http.Response, getErr error, opts *Options) (string, error) {
+	if getErr != nil {
+		return "", getErr
 	}
-	resp.Body.Close()
-	return resp.ContentLength
-}
-
-// saveURL downloads a single URL quietly (no report) and returns the saved
-// file's base name. Used by the -i concurrent path.
-func saveURL(rawURL string, opts *Options) (string, error) {
-	resp, err := httpClient.Get(rawURL)
-	if err != nil {
-		return "", err
+	if resp == nil {
+		return "", fmt.Errorf("no response")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
